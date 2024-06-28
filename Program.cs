@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace SubleqxAsm
@@ -248,7 +249,7 @@ namespace SubleqxAsm
         {
             obs = new OutputBitStream();
 
-            var lines = File.ReadAllLines(inputFile);
+            var lines = File.ReadAllLines(inputFile, Encoding.UTF8);
 
             var labels = new Dictionary<string, ulong>();
             for (int pass = 1; pass <= 2; pass++)
@@ -261,11 +262,12 @@ namespace SubleqxAsm
                     int dwm1w = 0;
                     int dataSize = 0;
                     bool align = false;
+                    bool defineString = false;
                     var spl1 = line.Split('#')[0].Split(',');
                     for (; i < spl1.Length; i++)
                     {
                         string param = spl1[i].Trim();
-                        var spl2 = param.Split(':');
+                        var spl2 = param.Split(new char[] { ':' }, 2);
                         if (spl2.Length == 2)
                         {
                             if (pass == 1)
@@ -281,15 +283,33 @@ namespace SubleqxAsm
                             break;
                         if (pass == 2 && i == 0)
                             Console.Write($"{ip,5}: ");
-                        var spl3 = param.Split(' ');
-                        if (spl3[0].StartsWith(".d"))
+                        var spl3 = param.Split(new char[] { ' ' }, 2);
+                        if (spl3[0].StartsWith(".d") || spl3[0].StartsWith(".s"))
                         {
                             if (dataSize != 0)
                                 throw new Exception();
                             dataSize = int.Parse(spl3[0].Substring(2));
                             if (dataSize <= 0)
                                 throw new Exception();
-                            param = spl3[1].Trim();
+                            if (spl3[0].StartsWith(".d"))
+                            {
+                                param = spl3[1].Trim();
+                            }
+                            else
+                            {
+                                if (defineString)
+                                    throw new Exception();
+                                defineString = true;
+                                if (line.Count(x => x == '"') != 2)
+                                    throw new Exception();
+                                int from = line.IndexOf('"') + 1;
+                                int to = line.LastIndexOf('"');
+                                param = line.Substring(from, to - from);
+                                ip += (ulong)(dataSize * param.Length);
+                                if (pass == 2)
+                                    foreach (var c in param)
+                                        WriteData(c, dataSize);
+                            }
                         }
                         else if (spl3[0].StartsWith(".align"))
                         {
@@ -354,7 +374,7 @@ namespace SubleqxAsm
                             else
                                 throw new Exception();
                         }
-                        else if (!align)
+                        else if (!align && !defineString)
                         {
                             ip += (ulong)dataSize;
                             if (pass == 2)
@@ -366,10 +386,8 @@ namespace SubleqxAsm
                                 WriteData(Evaluate(tokens), dataSize);
                             }
                         }
-                        else
-                            throw new Exception();
                     }
-                    if (!align)
+                    if (!align && !defineString)
                     {
                         if (dataSize == 0 && i > 0 && i != 6)
                             throw new Exception();
