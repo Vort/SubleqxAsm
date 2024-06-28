@@ -260,6 +260,7 @@ namespace SubleqxAsm
                     int aw = 0;
                     int dwm1w = 0;
                     int dataSize = 0;
+                    bool align = false;
                     var spl1 = line.Split('#')[0].Split(',');
                     for (; i < spl1.Length; i++)
                     {
@@ -278,6 +279,8 @@ namespace SubleqxAsm
                         }
                         if (param.Length == 0 && spl1.Length == 1)
                             break;
+                        if (pass == 2 && i == 0)
+                            Console.Write($"{ip,5}: ");
                         var spl3 = param.Split(' ');
                         if (spl3[0].StartsWith(".d"))
                         {
@@ -288,8 +291,24 @@ namespace SubleqxAsm
                                 throw new Exception();
                             param = spl3[1].Trim();
                         }
-                        if (pass == 2 && i == 0)
-                            Console.Write($"{ip,5}: ");
+                        else if (spl3[0].StartsWith(".align"))
+                        {
+                            if (align)
+                                throw new Exception();
+                            align = true;
+                            long alignValue = Evaluate(ShuntingYard(TokenizeExpression(spl3[1])));
+                            if (alignValue <= 1)
+                                throw new Exception();
+                            ulong mod = ip % (ulong)alignValue;
+                            if (mod != 0)
+                            {
+                                dataSize = (int)((ulong)alignValue - mod);
+                                ip += (ulong)dataSize;
+                                if (pass == 2)
+                                    WriteData(0, dataSize);
+                            }
+                            continue;
+                        }
                         if (dataSize == 0)
                         {
                             if (i <= 1)
@@ -335,7 +354,7 @@ namespace SubleqxAsm
                             else
                                 throw new Exception();
                         }
-                        else
+                        else if (!align)
                         {
                             ip += (ulong)dataSize;
                             if (pass == 2)
@@ -347,11 +366,16 @@ namespace SubleqxAsm
                                 WriteData(Evaluate(tokens), dataSize);
                             }
                         }
+                        else
+                            throw new Exception();
                     }
-                    if (dataSize == 0 && i > 0 && i != 6)
-                        throw new Exception();
-                    if (dataSize != 0 && i == 0)
-                        throw new Exception();
+                    if (!align)
+                    {
+                        if (dataSize == 0 && i > 0 && i != 6)
+                            throw new Exception();
+                        if (dataSize != 0 && i == 0)
+                            throw new Exception();
+                    }
                     if (pass == 2 && i != 0)
                         Console.WriteLine();
                 }
