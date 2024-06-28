@@ -21,7 +21,7 @@ namespace SubleqxAsm
 
         public void WriteValue(long value, int size)
         {
-            for (int i = size - 1; i > -1; i--)
+            for (int i = 0; i < size; i++)
             {
                 if ((value & 1 << i) != 0)
                     byteValue |= (byte)(1 << bitIndex);
@@ -78,10 +78,10 @@ namespace SubleqxAsm
         {
             if (value <= 0)
                 throw new Exception();
-            int sl = GetSizeLog(value);
-            obs.WriteValue(0, sl - 1);
-            CheckInteger(value, sl);
-            obs.WriteValue(value, sl);
+            int slm1 = GetSizeLog(value) - 1;
+            obs.WriteValue(0, slm1);
+            obs.WriteValue(1, 1);
+            obs.WriteValue(value - (1 << slm1), slm1);
             Console.Write($"{value} ");
         }
 
