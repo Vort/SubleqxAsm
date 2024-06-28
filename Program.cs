@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Text.RegularExpressions;
 
@@ -20,8 +21,6 @@ namespace SubleqxAsm
 
         public void WriteValue(long value, int size)
         {
-            if (value >= 1L << size)
-                throw new Exception();
             for (int i = size - 1; i > -1; i--)
             {
                 if ((value & 1 << i) != 0)
@@ -36,14 +35,6 @@ namespace SubleqxAsm
             }
         }
 
-        public int GetSize()
-        {
-            if (bitIndex != 0)
-                return data.Count + 1;
-            else
-                return data.Count;
-        }
-
         public byte[] GetData()
         {
             if (bitIndex != 0)
@@ -52,6 +43,12 @@ namespace SubleqxAsm
         }
     }
 
+    class Token
+    {
+        public bool IsOperator;
+        public string Value;
+        public BigInteger? IntValue;
+    }
 
     class Program
     {
@@ -72,6 +69,7 @@ namespace SubleqxAsm
 
         void WriteData(long value, int size)
         {
+            CheckInteger(value, size);
             obs.WriteValue(value, size);
             Console.Write($"{value} ");
         }
@@ -82,6 +80,7 @@ namespace SubleqxAsm
                 throw new Exception();
             int sl = GetSizeLog(value);
             obs.WriteValue(0, sl - 1);
+            CheckInteger(value, sl);
             obs.WriteValue(value, sl);
             Console.Write($"{value} ");
         }
@@ -94,30 +93,155 @@ namespace SubleqxAsm
             return (uint)(2 * sl - 1);
         }
 
-        static bool ParseInteger(string s, int width, ref long value)
+        List<Token> TokenizeExpression(string expression)
         {
-            string st = s;
-            bool negative = false;
-            if (st.StartsWith("-"))
+            var tokens = new List<Token>();
+            string value = "";
+            for (int i = 0; i < expression.Length; i++)
             {
-                negative = true;
-                st = st.Substring(1);
+                char c = expression[i];
+                if (c == ' ' || c == '\t')
+                    continue;
+                if (c == '(' || c == ')' || c == '*' || c == '/' || c == '+' || c == '-')
+                {
+                    if (value != "")
+                    {
+                        tokens.Add(new Token { IsOperator = false, Value = value });
+                        value = "";
+                    }
+                    if (c == '-' && (tokens.Count == 0 ||
+                        (tokens.Last().IsOperator && tokens.Last().Value != ")")))
+                    {
+                        c = 'u';
+                    }
+                    tokens.Add(new Token { IsOperator = true, Value = c.ToString() });
+                }
+                else
+                    value += c;
             }
+            if (value != "")
+                tokens.Add(new Token { IsOperator = false, Value = value });
+            return tokens;
+        }
+
+        int GetPrecedence(Token op)
+        {
+            if (!op.IsOperator)
+                throw new Exception();
+            string v = op.Value;
+            if (v == "+" || v == "-")
+                return 0;
+            else if (v == "*" || v == "/")
+                return 1;
+            else if (v == "u")
+                return 2;
+            else
+                throw new Exception();
+        }
+
+        List<Token> ShuntingYard(List<Token> tokens)
+        {
+            var result = new List<Token>();
+            var stack = new Stack<Token>();
+
+            foreach (var token in tokens)
+            {
+                if (!token.IsOperator)
+                    result.Add(token);
+                else if (token.Value == "(")
+                    stack.Push(token);
+                else if (token.Value == ")")
+                {
+                    while (stack.Peek().Value != "(")
+                        result.Add(stack.Pop());
+                    if (stack.Pop().Value != "(")
+                        throw new Exception();
+                }
+                else
+                {
+                    int p1 = GetPrecedence(token);
+                    for (;;)
+                    {
+                        if (stack.Count == 0)
+                            break;
+                        Token last = stack.Peek();
+                        if (last.Value == "(")
+                            break;
+                        int p2 = GetPrecedence(last);
+                        if (p2 >= p1)
+                            result.Add(stack.Pop());
+                        else
+                            break;
+                    }
+                    stack.Push(token);
+                }
+            }
+
+            while (stack.Count() != 0)
+                result.Add(stack.Pop());
+
+            return result;
+        }
+
+        public static BigInteger ParseInteger(string s)
+        {
+            string sn = s;
             bool hex = false;
-            if (st.StartsWith("0x"))
+            if (sn.StartsWith("0x"))
             {
                 hex = true;
-                st = "0" + st.Substring(2);
+                sn = "0" + sn.Substring(2);
             }
-            BigInteger n;
-            if (!BigInteger.TryParse(st, hex ? NumberStyles.HexNumber : 0, null, out n))
-                return false;
+            return BigInteger.Parse(sn, hex ? NumberStyles.HexNumber : 0);
+        }
+
+        long Evaluate(List<Token> tokens)
+        {
+            var stack = new Stack<Token>();
+            foreach (var token in tokens)
+            {
+                if (!token.IsOperator)
+                {
+                    if (token.IntValue == null)
+                        token.IntValue = ParseInteger(token.Value);
+                    stack.Push(token);
+                }
+                else
+                {
+                    if (token.Value != "u")
+                    {
+                        BigInteger right = (BigInteger)stack.Pop().IntValue;
+                        BigInteger left = (BigInteger)stack.Pop().IntValue;
+                        BigInteger result;
+                        if (token.Value == "+")
+                            result = left + right;
+                        else if (token.Value == "-")
+                            result = left - right;
+                        else if (token.Value == "*")
+                            result = left * right;
+                        else if (token.Value == "/")
+                            result = left / right;
+                        else
+                            throw new Exception();
+                        stack.Push(new Token { IsOperator = false, IntValue = result });
+                    }
+                    else
+                        stack.Push(new Token { IsOperator = false, IntValue = -stack.Pop().IntValue });
+                }
+            }
+            if (stack.Count != 1)
+                throw new Exception();
+            return (long)stack.Pop().IntValue;
+        }
+
+        static void CheckInteger(BigInteger integer, int width)
+        {
             BigInteger limit = BigInteger.One;
             limit <<= width;
-            if (n >= limit)
-                return false;
-            value = (long)(negative ? -n : n);
-            return true;
+            if (integer < 0)
+                integer = -integer;
+            if (integer >= limit)
+                throw new Exception();
         }
 
         void Assemble(string inputFile, string outputFile, ulong baseAddr)
@@ -197,17 +321,15 @@ namespace SubleqxAsm
                                 ip += (ulong)aw;
                                 if (pass == 2)
                                 {
-                                    long p = 0;
-                                    if (!ParseInteger(param, aw, ref p))
+                                    var tokens = ShuntingYard(TokenizeExpression(param));
+                                    foreach (var token in tokens)
                                     {
-                                        if (i == 5 && param == "@n")
-                                            p = (long)ip;
-                                        else if (labels.ContainsKey(param))
-                                            p = (long)labels[param];
-                                        else
-                                            throw new Exception($"{param} label is not found");
+                                        if (i == 5 && token.Value == "@n")
+                                            token.IntValue = ip;
+                                        else if (labels.ContainsKey(token.Value))
+                                            token.IntValue = labels[token.Value];
                                     }
-                                    WriteData(p, aw);
+                                    WriteData(Evaluate(tokens), aw);
                                 }
                             }
                             else
@@ -218,10 +340,11 @@ namespace SubleqxAsm
                             ip += (ulong)dataSize;
                             if (pass == 2)
                             {
-                                long d = 0;
-                                if (!ParseInteger(param, dataSize, ref d))
-                                    throw new Exception();
-                                WriteData(d, dataSize);
+                                var tokens = ShuntingYard(TokenizeExpression(param));
+                                foreach (var token in tokens)
+                                    if (labels.ContainsKey(token.Value))
+                                        token.IntValue = labels[param];
+                                WriteData(Evaluate(tokens), dataSize);
                             }
                         }
                     }
@@ -255,7 +378,7 @@ namespace SubleqxAsm
 
             string inputFile = args[0];
             string outputFile = Path.ChangeExtension(inputFile, ".bin");
-            long baseAddr = 0;
+            BigInteger baseAddr = BigInteger.Zero;
 
             for (int i = 1; i < args.Length; i += 2)
             {
@@ -263,8 +386,8 @@ namespace SubleqxAsm
                     outputFile = args[i + 1];
                 else if (args[i] == "-b")
                 {
-                    if (!ParseInteger(args[i + 1], 63, ref baseAddr))
-                        throw new Exception();
+                    baseAddr = ParseInteger(args[i + 1]);
+                    CheckInteger(baseAddr, 63);
                     if (baseAddr < 0)
                         throw new Exception();
                 }
